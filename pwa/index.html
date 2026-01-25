@@ -41,12 +41,13 @@
   <pre id="out">Ready.</pre>
 
   <script>
+    console.log("PWA script loaded", location.href);
+
     // --- PWA: register service worker ---
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("./sw.js").catch(console.error);
     }
 
-    // --- Worker proxy endpoint (your deployed Worker) ---
     const PROXY_PREDICTIONS_URL =
       "https://fancy-feather-4b30.mbtamaghountimer.workers.dev/api/predictions";
 
@@ -65,12 +66,10 @@
 
     async function fetchPredictions() {
       const res = await fetch(PROXY_PREDICTIONS_URL, { cache: "no-store" });
-
       if (!res.ok) {
         const text = await res.text();
         throw new Error(`Proxy error ${res.status}: ${text}`);
       }
-
       return res.json();
     }
 
@@ -78,22 +77,21 @@
       return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
 
-    // --- Leave logic ---
+    // IMPORTANT: declare this with 'function' so it's global (shows up as window.runLeaveLogic)
     async function runLeaveLogic() {
+      $("out").textContent = "Fetching predictions…";
+
       const walkSeconds = Number($("walkSeconds").value || 600);
       const bufferMinutes = Number($("bufferMinutes").value || 2);
 
       const walkMs = walkSeconds * 1000;
       const bufferMs = bufferMinutes * 60 * 1000;
 
-      $("out").textContent = "Fetching predictions…";
-
       const json = await fetchPredictions();
 
       const nowMs = Date.now();
       const now = new Date(nowMs);
 
-      // Build sorted list of upcoming predicted times (arrival OR departure)
       const upcoming = (json.data ?? [])
         .map((p) => p.attributes?.arrival_time ?? p.attributes?.departure_time)
         .filter(Boolean)
@@ -109,7 +107,6 @@
       const readyTimeMs = nowMs + walkMs;
       const readyTime = new Date(readyTimeMs);
 
-      // Pick the first train we can actually catch (train_time >= readyTime)
       const catchableIndex = upcoming.findIndex((t) => t.getTime() >= readyTimeMs);
 
       let output = "";
@@ -131,13 +128,12 @@
       }
 
       const targetTrain = upcoming[catchableIndex];
-      const targetMs = targetTrain.getTime();
-      const slackMs = targetMs - readyTimeMs;
+      const slackMs = targetTrain.getTime() - readyTimeMs;
 
       if (slackMs <= bufferMs) {
         output += `LEAVE NOW to catch the ${fmtTime(targetTrain)} train.\n`;
       } else {
-        const leaveByMs = targetMs - walkMs;
+        const leaveByMs = targetTrain.getTime() - walkMs;
         const leaveBy = new Date(leaveByMs);
         const waitMs = leaveByMs - nowMs;
 
@@ -149,10 +145,19 @@
     }
 
     $("save").addEventListener("click", saveSettings);
-    $("check").addEventListener("click", () => runLeaveLogic().catch(e => {
-      console.error(e);
-      $("out").textContent = `Error: ${e.message}`;
-    }));
 
-    loadSettings()
+    // Make it impossible to be silent on click
+    $("check").addEventListener("click", async () => {
+      $("out").textContent = "Clicked. Running…";
+      try {
+        await runLeaveLogic();
+      } catch (e) {
+        console.error(e);
+        $("out").textContent = `Error: ${e?.message ?? e}`;
+      }
+    });
 
+    loadSettings();
+  </script>
+</body>
+</html>
